@@ -16687,6 +16687,16 @@
                         "range": null,
                         "title": "Enable functions that use the filesystem",
                         "type": "bool"
+                    },
+                    {
+                        "children": [],
+                        "depends_on": null,
+                        "help": "This options allows weak certificate verification by skipping the hostname verification.\nIt is not recommended to use this option.",
+                        "id": "MBEDTLS_ALLOW_WEAK_CERTIFICATE_VERIFICATION",
+                        "name": "MBEDTLS_ALLOW_WEAK_CERTIFICATE_VERIFICATION",
+                        "range": null,
+                        "title": "Allow weak certificate verification",
+                        "type": "bool"
                     }
                 ],
                 "depends_on": null,

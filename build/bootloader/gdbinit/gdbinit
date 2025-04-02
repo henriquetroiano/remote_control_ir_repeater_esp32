@@ -1,2 +1,2 @@
-source /workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader/gdbinit/symbols
-source /workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader/gdbinit/connect
+source /workspaces/remote_control_ir_repeater_esp32/build/bootloader/gdbinit/symbols
+source /workspaces/remote_control_ir_repeater_esp32/build/bootloader/gdbinit/connect

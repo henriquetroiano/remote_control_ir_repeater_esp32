@@ -2,34 +2,34 @@
 	"sources" : 
 	[
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/CMakeFiles/bootloader"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/CMakeFiles/bootloader"
 		},
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/CMakeFiles/bootloader.rule"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/CMakeFiles/bootloader.rule"
 		},
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/CMakeFiles/bootloader-complete.rule"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/CMakeFiles/bootloader-complete.rule"
 		},
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule"
 		},
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule"
 		},
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule"
 		},
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule"
 		},
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule"
 		},
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule"
 		},
 		{
-			"file" : "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule"
+			"file" : "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule"
 		}
 	],
 	"target" : 

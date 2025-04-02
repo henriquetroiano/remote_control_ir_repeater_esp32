@@ -10,18 +10,18 @@ if(NOT EXISTS "/opt/esp/idf/components/bootloader/subproject")
   file(MAKE_DIRECTORY "/opt/esp/idf/components/bootloader/subproject")
 endif()
 file(MAKE_DIRECTORY
-  "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader"
-  "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix"
-  "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/tmp"
-  "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp"
-  "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src"
-  "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp"
+  "/workspaces/remote_control_ir_repeater_esp32/build/bootloader"
+  "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix"
+  "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/tmp"
+  "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp"
+  "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src"
+  "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp"
 )
 
 set(configSubDirs )
 foreach(subDir IN LISTS configSubDirs)
-    file(MAKE_DIRECTORY "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/${subDir}")
+    file(MAKE_DIRECTORY "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/${subDir}")
 endforeach()
 if(cfgdir)
-  file(MAKE_DIRECTORY "/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp${cfgdir}") # cfgdir has leading slash
+  file(MAKE_DIRECTORY "/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp${cfgdir}") # cfgdir has leading slash
 endif()

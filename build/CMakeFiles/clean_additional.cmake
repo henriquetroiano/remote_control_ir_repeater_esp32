@@ -17,8 +17,8 @@ if("${CONFIG}" STREQUAL "" OR "${CONFIG}" STREQUAL "")
   "ldgen_libraries"
   "ldgen_libraries.in"
   "project_elf_src_esp32.c"
-  "remote_control_ir_repeater_esp32_arduino.bin"
-  "remote_control_ir_repeater_esp32_arduino.map"
+  "remote_control_ir_repeater_esp32.bin"
+  "remote_control_ir_repeater_esp32.map"
   "x509_crt_bundle.S"
   )
 endif()

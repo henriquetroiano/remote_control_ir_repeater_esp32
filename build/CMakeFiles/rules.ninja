@@ -6,7 +6,7 @@
 # It is included in the main 'build.ninja'.
 
 # =============================================================================
-# Project: remote_control_ir_repeater_esp32_arduino
+# Project: remote_control_ir_repeater_esp32
 # Configurations: 
 # =============================================================================
 # =============================================================================
@@ -14,7 +14,7 @@
 #############################################
 # Rule for compiling C files.
 
-rule C_COMPILER__remote_control_ir_repeater_esp32_arduino.2eelf_unscanned_
+rule C_COMPILER__remote_control_ir_repeater_esp32.2eelf_unscanned_
   depfile = $DEP_FILE
   deps = gcc
   command = ccache ${LAUNCHER}${CODE_CHECK}/opt/esp/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
@@ -24,7 +24,7 @@ rule C_COMPILER__remote_control_ir_repeater_esp32_arduino.2eelf_unscanned_
 #############################################
 # Rule for linking CXX executable.
 
-rule CXX_EXECUTABLE_LINKER__remote_control_ir_repeater_esp32_arduino.2eelf_
+rule CXX_EXECUTABLE_LINKER__remote_control_ir_repeater_esp32.2eelf_
   command = $PRE_LINK && /opt/esp/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin/xtensa-esp32-elf-g++ $FLAGS $LINK_FLAGS $in -o $TARGET_FILE $LINK_PATH $LINK_LIBRARIES && $POST_BUILD
   description = Linking CXX executable $TARGET_FILE
   restat = $RESTAT
@@ -1242,7 +1242,7 @@ rule C_STATIC_LIBRARY_LINKER____idf_main_
 # Rule for re-running cmake.
 
 rule RERUN_CMAKE
-  command = /opt/esp/tools/cmake/3.30.2/bin/cmake --regenerate-during-build -S/workspaces/remote_control_ir_repeater_esp32_arduino -B/workspaces/remote_control_ir_repeater_esp32_arduino/build
+  command = /opt/esp/tools/cmake/3.30.2/bin/cmake --regenerate-during-build -S/workspaces/remote_control_ir_repeater_esp32 -B/workspaces/remote_control_ir_repeater_esp32/build
   description = Re-running CMake...
   generator = 1
 

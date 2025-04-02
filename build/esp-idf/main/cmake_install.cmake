@@ -1,4 +1,4 @@
-# Install script for directory: /workspaces/remote_control_ir_repeater_esp32_arduino/main
+# Install script for directory: /workspaces/remote_control_ir_repeater_esp32/main
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)

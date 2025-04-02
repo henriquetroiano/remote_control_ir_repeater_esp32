@@ -1,4 +1,4 @@
-# Install script for directory: /workspaces/remote_control_ir_repeater_esp32_arduino
+# Install script for directory: /workspaces/remote_control_ir_repeater_esp32
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -39,7 +39,7 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("/workspaces/remote_control_ir_repeater_esp32_arduino/build/esp-idf/cmake_install.cmake")
+  include("/workspaces/remote_control_ir_repeater_esp32/build/esp-idf/cmake_install.cmake")
 endif()
 
 if(CMAKE_INSTALL_COMPONENT)
@@ -57,6 +57,6 @@ endif()
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-  file(WRITE "/workspaces/remote_control_ir_repeater_esp32_arduino/build/${CMAKE_INSTALL_MANIFEST}"
+  file(WRITE "/workspaces/remote_control_ir_repeater_esp32/build/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")
 endif()

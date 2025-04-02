@@ -22,4 +22,4 @@ set confirm off
 set confirm on
 
 # Load application symbols
-file /workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader/bootloader.elf
+file /workspaces/remote_control_ir_repeater_esp32/build/bootloader/bootloader.elf

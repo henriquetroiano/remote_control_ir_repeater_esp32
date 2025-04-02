@@ -1,0 +1,666 @@
+#include <string.h>
+#include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include "esp_now.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_system.h"
+#include "nvs_flash.h"
+#include "esp_mac.h"
+#include "driver/i2c.h"
+
+// =======================================================================
+// ====================== Definições gerais do seu código ESP-NOW ========
+// =======================================================================
+
+#define GROUP_CODE   "GRUPO_X"
+#define MAX_PEERS    20
+#define BLINK_GPIO   CONFIG_BLINK_GPIO  // Ajuste no menuconfig
+#define BLINK_PERIOD 1000               // Em ms
+
+static const char *TAG = "espnow_debug";
+static uint8_t s_led_state = 0;
+
+// Estrutura da mensagem ESP-NOW
+typedef struct
+{
+    char type[8];
+    char code[16];
+    char data[32];
+} __attribute__((packed)) message_t;
+
+esp_now_peer_info_t peers[MAX_PEERS];
+int peer_count = 0;
+
+// -------------------------------------------------------------------
+// Prototipos (ESP-NOW)
+static void configure_led(void);
+static void blink_led(void);
+static void print_mac(const char *prefix, const uint8_t *mac);
+static void add_peer_if_needed(const uint8_t *mac);
+static void send_hello(void);
+static void send_data_to_peers(void);
+static void send_welcome(const uint8_t *dest_mac);
+static void hello_task(void *pvParams);
+static void wait_for_wifi_ready(void);
+static void init_wifi(void);
+static void init_espnow(void);
+
+void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int data_len);
+void on_data_sent(const uint8_t *mac_addr, esp_now_send_status_t status);
+
+// -------------------------------------------------------------------
+// LED
+static void configure_led(void)
+{
+    gpio_reset_pin(BLINK_GPIO);
+    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+}
+
+static void blink_led(void)
+{
+    gpio_set_level(BLINK_GPIO, s_led_state);
+}
+
+static void print_mac(const char *prefix, const uint8_t *mac)
+{
+    ESP_LOGI(TAG, "%s %02X:%02X:%02X:%02X:%02X:%02X",
+             prefix, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+// -------------------------------------------------------------------
+// Gerenciamento de Peers
+static void add_peer_if_needed(const uint8_t *mac)
+{
+    for (int i = 0; i < peer_count; ++i)
+    {
+        if (memcmp(peers[i].peer_addr, mac, 6) == 0)
+        {
+            ESP_LOGI(TAG, "Peer já registrado.");
+            return;
+        }
+    }
+
+    if (peer_count < MAX_PEERS)
+    {
+        esp_now_peer_info_t peer = {
+            .channel = 0,
+            .ifidx = WIFI_IF_STA,
+            .encrypt = false,
+        };
+        memcpy(peer.peer_addr, mac, 6);
+        esp_err_t err = esp_now_add_peer(&peer);
+        if (err == ESP_OK)
+        {
+            peers[peer_count++] = peer;
+            print_mac("✅ Novo peer registrado:", mac);
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Erro ao registrar peer: %s", esp_err_to_name(err));
+        }
+    }
+    else
+    {
+        ESP_LOGW(TAG, "⚠️ Limite de peers atingido!");
+    }
+}
+
+// -------------------------------------------------------------------
+// Envio de Mensagens
+static void send_hello(void)
+{
+    uint8_t broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    message_t msg = {0};
+    strcpy(msg.type, "HELLO");
+    strcpy(msg.code, GROUP_CODE);
+
+    esp_err_t err = esp_now_send(broadcast_mac, (uint8_t *)&msg, sizeof(msg));
+    if (err == ESP_OK)
+    {
+        ESP_LOGI(TAG, "📢 HELLO enviado via broadcast.");
+    }
+    else
+    {
+        ESP_LOGE(TAG, "❌ Falha ao enviar HELLO: %s", esp_err_to_name(err));
+    }
+}
+
+static void send_data_to_peers(void)
+{
+    message_t msg = {0};
+    strcpy(msg.type, "DATA");
+    strcpy(msg.code, GROUP_CODE);
+    sprintf(msg.data, "LED %s", s_led_state ? "ON" : "OFF");
+
+    for (int i = 0; i < peer_count; ++i)
+    {
+        print_mac("📤 Enviando DATA para", peers[i].peer_addr);
+        esp_err_t err = esp_now_send(peers[i].peer_addr, (uint8_t *)&msg, sizeof(msg));
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "❌ Falha ao enviar para peer %d: %s", i, esp_err_to_name(err));
+        }
+    }
+}
+
+static void send_welcome(const uint8_t *dest_mac)
+{
+    message_t msg = {0};
+    strcpy(msg.type, "WELCOME");
+    strcpy(msg.code, GROUP_CODE);
+    sprintf(msg.data, "MAC OK");
+
+    print_mac("📤 Respondendo WELCOME para", dest_mac);
+
+    esp_err_t err = esp_now_send(dest_mac, (uint8_t *)&msg, sizeof(msg));
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "❌ Falha ao enviar WELCOME: %s", esp_err_to_name(err));
+    }
+}
+
+// -------------------------------------------------------------------
+// Callbacks ESP-NOW
+void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int data_len)
+{
+    if (data_len != sizeof(message_t))
+    {
+        ESP_LOGW(TAG, "⚠️ Mensagem com tamanho inválido: %d", data_len);
+        return;
+    }
+
+    const uint8_t *mac = recv_info->src_addr;
+    message_t *msg = (message_t *)data;
+
+    // Obter MAC local
+    uint8_t my_mac[6];
+    esp_read_mac(my_mac, ESP_MAC_WIFI_STA);
+
+    if (memcmp(mac, my_mac, 6) == 0)
+    {
+        ESP_LOGW(TAG, "⚠️ Ignorando mensagem do próprio MAC.");
+        return;
+    }
+
+    print_mac(msg->type, mac);
+    ESP_LOGI(TAG, "📨 Conteúdo: '%s'", msg->data);
+
+    if (strcmp(msg->code, GROUP_CODE) != 0)
+    {
+        ESP_LOGW(TAG, "⚠️ Código do grupo inválido: %s", msg->code);
+        return;
+    }
+
+    if (strcmp(msg->type, "HELLO") == 0)
+    {
+        add_peer_if_needed(mac);
+        send_welcome(mac);
+    }
+    else if (strcmp(msg->type, "WELCOME") == 0)
+    {
+        add_peer_if_needed(mac);
+    }
+    else if (strcmp(msg->type, "DATA") == 0)
+    {
+        add_peer_if_needed(mac);
+        // Ação customizada se quiser
+    }
+}
+
+void on_data_sent(const uint8_t *mac_addr, esp_now_send_status_t status)
+{
+    print_mac("📤 Envio concluído para", mac_addr);
+    ESP_LOGI(TAG, "📦 Status: %s", status == ESP_NOW_SEND_SUCCESS ? "SUCESSO" : "FALHA");
+}
+
+// -------------------------------------------------------------------
+// Tarefa HELLO
+static void hello_task(void *pvParams)
+{
+    for (int i = 0; i < 10; i++)
+    {
+        ESP_LOGI(TAG, "⏱️  Enviando HELLO (%d/10)", i + 1);
+        send_hello();
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+    }
+    ESP_LOGI(TAG, "✅ Fim do envio de HELLOs");
+    vTaskDelete(NULL);
+}
+
+// -------------------------------------------------------------------
+// Wi-Fi (STA)
+static void init_wifi(void)
+{
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    // Ajuste de canal
+    ESP_ERROR_CHECK(esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE));
+    ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA,
+                                          WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
+}
+
+static void wait_for_wifi_ready(void)
+{
+    wifi_second_chan_t second;
+    uint8_t channel = 0;
+    esp_err_t err;
+
+    for (int retry = 0; retry < 20; retry++)
+    {
+        err = esp_wifi_get_channel(&channel, &second);
+        if (err == ESP_OK && channel > 0)
+        {
+            ESP_LOGI(TAG, "✅ Wi-Fi ativo no canal %d", channel);
+            return;
+        }
+        ESP_LOGW(TAG, "⏳ Aguardando Wi-Fi estabilizar... (%d)", retry + 1);
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+    }
+
+    ESP_LOGE(TAG, "❌ Timeout esperando Wi-Fi pronto");
+}
+
+static void init_espnow(void)
+{
+    // Se já existir, reinicializa
+    if (esp_now_is_peer_exist((uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}))
+    {
+        ESP_ERROR_CHECK(esp_now_deinit());
+    }
+
+    ESP_ERROR_CHECK(esp_now_init());
+    ESP_ERROR_CHECK(esp_now_register_recv_cb(on_data_recv));
+    ESP_ERROR_CHECK(esp_now_register_send_cb(on_data_sent));
+
+    // Adiciona peer de broadcast
+    const uint8_t bcast[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    esp_now_peer_info_t peer = {
+        .channel = 1, // mesmo canal do Wi-Fi
+        .ifidx = WIFI_IF_STA,
+        .encrypt = false
+    };
+    memcpy(peer.peer_addr, bcast, 6);
+
+    if (!esp_now_is_peer_exist(bcast))
+    {
+        esp_err_t err = esp_now_add_peer(&peer);
+        if (err == ESP_OK)
+        {
+            ESP_LOGI(TAG, "📡 Peer de broadcast registrado.");
+        }
+        else
+        {
+            ESP_LOGE(TAG, "❌ Erro ao registrar peer de broadcast: %s", esp_err_to_name(err));
+        }
+    }
+}
+
+// =======================================================================
+// ======================== Controle do OLED SSD1306 ======================
+// =======================================================================
+
+// Endereço típico do SSD1306 I2C
+#define SSD1306_ADDR        0x3C  // verifique se é 0x3C ou 0x3D
+
+// Dimensão 128 x 64
+#define OLED_WIDTH          128
+#define OLED_HEIGHT         64
+#define OLED_PAGES          (OLED_HEIGHT / 8)  // 64/8 = 8 páginas
+
+// Pinos I2C
+#define I2C_SDA_PIN         21
+#define I2C_SCL_PIN         22
+#define I2C_PORT            I2C_NUM_0
+#define I2C_FREQ_HZ         100000
+
+// Framebuffer local: cada bit representa um pixel
+static uint8_t s_oled_buffer[OLED_WIDTH * OLED_PAGES];
+
+// Fonte 6x8 para caracteres ASCII 0x20..0x7F (96 chars)
+// Cada caractere = 6 bytes (colunas), 8 bits de altura
+// (Existem muitas fontes 6x8 disponíveis; este é um exemplo genérico.)
+static const uint8_t ssd1306_font6x8[] = {
+  // Tabela de 96 caracteres, cada um com 6 bytes:
+  // (ASCII 0x20 ' ' ... 0x7F '~')
+  // Fonte simplificada. Caso queira mais completa, pode usar outra.
+  // ---
+  // Para não alongar demais, vou inserir uma fonte comum minimalista:
+  0x00,0x00,0x00,0x00,0x00,0x00, // 0x20 ' '
+  0x00,0x00,0x5F,0x00,0x00,0x00, // 0x21 '!'
+  0x00,0x03,0x00,0x03,0x00,0x00, // 0x22 '"'
+  0x14,0x7F,0x14,0x7F,0x14,0x00, // 0x23 '#'
+  0x24,0x2A,0x7F,0x2A,0x12,0x00, // 0x24 '$'
+  0x23,0x13,0x08,0x64,0x62,0x00, // 0x25 '%'
+  0x36,0x49,0x55,0x22,0x50,0x00, // 0x26 '&'
+  0x00,0x05,0x03,0x00,0x00,0x00, // 0x27 '''
+  0x00,0x1C,0x22,0x41,0x00,0x00, // 0x28 '('
+  0x00,0x41,0x22,0x1C,0x00,0x00, // 0x29 ')'
+  0x14,0x08,0x3E,0x08,0x14,0x00, // 0x2A '*'
+  0x08,0x08,0x3E,0x08,0x08,0x00, // 0x2B '+'
+  0x00,0x50,0x30,0x00,0x00,0x00, // 0x2C ','
+  0x08,0x08,0x08,0x08,0x08,0x00, // 0x2D '-'
+  0x00,0x60,0x60,0x00,0x00,0x00, // 0x2E '.'
+  0x20,0x10,0x08,0x04,0x02,0x00, // 0x2F '/'
+  0x3E,0x51,0x49,0x45,0x3E,0x00, // 0x30 '0'
+  0x00,0x42,0x7F,0x40,0x00,0x00, // 0x31 '1'
+  0x72,0x49,0x49,0x49,0x46,0x00, // 0x32 '2'
+  0x21,0x49,0x49,0x49,0x3E,0x00, // 0x33 '3'
+  0x18,0x14,0x12,0x7F,0x10,0x00, // 0x34 '4'
+  0x27,0x45,0x45,0x45,0x39,0x00, // 0x35 '5'
+  0x3C,0x4A,0x49,0x49,0x30,0x00, // 0x36 '6'
+  0x01,0x71,0x09,0x05,0x03,0x00, // 0x37 '7'
+  0x36,0x49,0x49,0x49,0x36,0x00, // 0x38 '8'
+  0x06,0x49,0x49,0x29,0x1E,0x00, // 0x39 '9'
+  0x00,0x36,0x36,0x00,0x00,0x00, // 0x3A ':'
+  0x00,0x56,0x36,0x00,0x00,0x00, // 0x3B ';'
+  0x08,0x14,0x22,0x41,0x00,0x00, // 0x3C '<'
+  0x14,0x14,0x14,0x14,0x14,0x00, // 0x3D '='
+  0x00,0x41,0x22,0x14,0x08,0x00, // 0x3E '>'
+  0x02,0x01,0x59,0x09,0x06,0x00, // 0x3F '?'
+  0x3E,0x41,0x5D,0x59,0x4E,0x00, // 0x40 '@'
+  0x7E,0x11,0x11,0x11,0x7E,0x00, // 0x41 'A'
+  0x7F,0x49,0x49,0x49,0x36,0x00, // 0x42 'B'
+  0x3E,0x41,0x41,0x41,0x22,0x00, // 0x43 'C'
+  0x7F,0x41,0x41,0x22,0x1C,0x00, // 0x44 'D'
+  0x7F,0x49,0x49,0x49,0x41,0x00, // 0x45 'E'
+  0x7F,0x09,0x09,0x09,0x01,0x00, // 0x46 'F'
+  0x3E,0x41,0x49,0x49,0x7A,0x00, // 0x47 'G'
+  0x7F,0x08,0x08,0x08,0x7F,0x00, // 0x48 'H'
+  0x00,0x41,0x7F,0x41,0x00,0x00, // 0x49 'I'
+  0x20,0x40,0x41,0x3F,0x01,0x00, // 0x4A 'J'
+  0x7F,0x08,0x14,0x22,0x41,0x00, // 0x4B 'K'
+  0x7F,0x40,0x40,0x40,0x40,0x00, // 0x4C 'L'
+  0x7F,0x02,0x04,0x02,0x7F,0x00, // 0x4D 'M'
+  0x7F,0x04,0x08,0x10,0x7F,0x00, // 0x4E 'N'
+  0x3E,0x41,0x41,0x41,0x3E,0x00, // 0x4F 'O'
+  0x7F,0x09,0x09,0x09,0x06,0x00, // 0x50 'P'
+  0x3E,0x41,0x51,0x21,0x5E,0x00, // 0x51 'Q'
+  0x7F,0x09,0x19,0x29,0x46,0x00, // 0x52 'R'
+  0x26,0x49,0x49,0x49,0x32,0x00, // 0x53 'S'
+  0x01,0x01,0x7F,0x01,0x01,0x00, // 0x54 'T'
+  0x3F,0x40,0x40,0x40,0x3F,0x00, // 0x55 'U'
+  0x1F,0x20,0x40,0x20,0x1F,0x00, // 0x56 'V'
+  0x7F,0x20,0x10,0x20,0x7F,0x00, // 0x57 'W'
+  0x63,0x14,0x08,0x14,0x63,0x00, // 0x58 'X'
+  0x07,0x08,0x70,0x08,0x07,0x00, // 0x59 'Y'
+  0x61,0x51,0x49,0x45,0x43,0x00, // 0x5A 'Z'
+  0x00,0x7F,0x41,0x41,0x00,0x00, // 0x5B '['
+  0x02,0x04,0x08,0x10,0x20,0x00, // 0x5C '\'
+  0x00,0x41,0x41,0x7F,0x00,0x00, // 0x5D ']'
+  0x04,0x02,0x01,0x02,0x04,0x00, // 0x5E '^'
+  0x80,0x80,0x80,0x80,0x80,0x00, // 0x5F '_'
+  0x00,0x01,0x02,0x00,0x00,0x00, // 0x60 '`'
+  0x20,0x54,0x54,0x54,0x38,0x00, // 0x61 'a'
+  0x7F,0x28,0x44,0x44,0x38,0x00, // 0x62 'b'
+  0x38,0x44,0x44,0x44,0x28,0x00, // 0x63 'c'
+  0x38,0x44,0x44,0x28,0x7F,0x00, // 0x64 'd'
+  0x38,0x54,0x54,0x54,0x18,0x00, // 0x65 'e'
+  0x08,0x7E,0x09,0x01,0x02,0x00, // 0x66 'f'
+  0x0C,0x52,0x52,0x52,0x3E,0x00, // 0x67 'g'
+  0x7F,0x08,0x04,0x04,0x78,0x00, // 0x68 'h'
+  0x00,0x44,0x7D,0x40,0x00,0x00, // 0x69 'i'
+  0x20,0x40,0x44,0x3D,0x00,0x00, // 0x6A 'j'
+  0x7F,0x10,0x28,0x44,0x00,0x00, // 0x6B 'k'
+  0x00,0x41,0x7F,0x40,0x00,0x00, // 0x6C 'l'
+  0x7C,0x04,0x38,0x04,0x78,0x00, // 0x6D 'm'
+  0x7C,0x08,0x04,0x04,0x78,0x00, // 0x6E 'n'
+  0x38,0x44,0x44,0x44,0x38,0x00, // 0x6F 'o'
+  0x7C,0x14,0x14,0x14,0x08,0x00, // 0x70 'p'
+  0x08,0x14,0x14,0x14,0x7C,0x00, // 0x71 'q'
+  0x7C,0x08,0x04,0x04,0x08,0x00, // 0x72 'r'
+  0x48,0x54,0x54,0x54,0x20,0x00, // 0x73 's'
+  0x04,0x3F,0x44,0x40,0x20,0x00, // 0x74 't'
+  0x3C,0x40,0x40,0x20,0x7C,0x00, // 0x75 'u'
+  0x1C,0x20,0x40,0x20,0x1C,0x00, // 0x76 'v'
+  0x7C,0x20,0x10,0x20,0x7C,0x00, // 0x77 'w'
+  0x44,0x28,0x10,0x28,0x44,0x00, // 0x78 'x'
+  0x0C,0x50,0x50,0x50,0x3C,0x00, // 0x79 'y'
+  0x44,0x64,0x54,0x4C,0x44,0x00, // 0x7A 'z'
+  0x00,0x08,0x36,0x41,0x00,0x00, // 0x7B '{'
+  0x00,0x00,0x7F,0x00,0x00,0x00, // 0x7C '|'
+  0x00,0x41,0x36,0x08,0x00,0x00, // 0x7D '}'
+  0x02,0x01,0x02,0x04,0x02,0x00  // 0x7E '~'
+  // (Se quiser 0x7F ou estender, pode adicionar)
+};
+
+// --------- Funções de escrita I2C (para comandos e dados) ----------
+static void ssd1306_write_cmd(uint8_t cmd)
+{
+    i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
+    i2c_master_start(cmd_handle);
+    // Endereço e bit de WRITE
+    i2c_master_write_byte(cmd_handle, (SSD1306_ADDR << 1) | I2C_MASTER_WRITE, true);
+    // 0x00 indica que vamos enviar comandos
+    i2c_master_write_byte(cmd_handle, 0x00, true);
+    // Envia o cmd
+    i2c_master_write_byte(cmd_handle, cmd, true);
+    i2c_master_stop(cmd_handle);
+
+    esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, cmd_handle, pdMS_TO_TICKS(100));
+    i2c_cmd_link_delete(cmd_handle);
+
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE("SSD1306", "Erro ao enviar comando 0x%02X: %s", cmd, esp_err_to_name(ret));
+    }
+}
+
+static void ssd1306_write_data(uint8_t data)
+{
+    i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
+    i2c_master_start(cmd_handle);
+    i2c_master_write_byte(cmd_handle, (SSD1306_ADDR << 1) | I2C_MASTER_WRITE, true);
+    // 0x40 indica que vamos enviar dados
+    i2c_master_write_byte(cmd_handle, 0x40, true);
+    i2c_master_write_byte(cmd_handle, data, true);
+    i2c_master_stop(cmd_handle);
+
+    esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, cmd_handle, pdMS_TO_TICKS(100));
+    i2c_cmd_link_delete(cmd_handle);
+
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE("SSD1306", "Erro ao enviar data 0x%02X: %s", data, esp_err_to_name(ret));
+    }
+}
+
+// --------- Inicialização básica do SSD1306 128x64 ----------
+static void ssd1306_init(void)
+{
+    // Alguns comandos "clássicos" de init para SSD1306 128x64:
+    ssd1306_write_cmd(0xAE); // Display OFF
+    ssd1306_write_cmd(0x20); // Set Memory Addressing Mode
+    ssd1306_write_cmd(0x00); // Horizontal addressing mode
+    ssd1306_write_cmd(0xB0); // Page Start Address for Page Addressing Mode
+    ssd1306_write_cmd(0xC8); // COM Output Scan Direction (remap)
+    ssd1306_write_cmd(0x00); // low column address
+    ssd1306_write_cmd(0x10); // high column address
+    ssd1306_write_cmd(0x40); // start line = 0
+    ssd1306_write_cmd(0x81); // contrast
+    ssd1306_write_cmd(0xFF); // max contrast
+    ssd1306_write_cmd(0xA1); // segment remap
+    ssd1306_write_cmd(0xA6); // normal display (A7= invert)
+    ssd1306_write_cmd(0xA8); // multiplex
+    ssd1306_write_cmd(0x3F); // 1/64 duty
+    ssd1306_write_cmd(0xA4); // output follows RAM (se 0xA5, display all on)
+    ssd1306_write_cmd(0xD3); // display offset
+    ssd1306_write_cmd(0x00);
+    ssd1306_write_cmd(0xD5); // display clock divide
+    ssd1306_write_cmd(0xF0);
+    ssd1306_write_cmd(0xD9); // pre-charge
+    ssd1306_write_cmd(0x22);
+    ssd1306_write_cmd(0xDA); // com pins
+    ssd1306_write_cmd(0x12);
+    ssd1306_write_cmd(0xDB); // vcomh
+    ssd1306_write_cmd(0x20);
+    ssd1306_write_cmd(0x8D); // charge pump
+    ssd1306_write_cmd(0x14);
+    ssd1306_write_cmd(0xAF); // Display ON
+
+    // Limpa o buffer local
+    memset(s_oled_buffer, 0x00, sizeof(s_oled_buffer));
+}
+
+// --------- Atualiza o display (envia todo o buffer) ----------
+static void ssd1306_update(void)
+{
+    // O display é dividido em 8 páginas (cada página = 8 linhas)
+    for (uint8_t page = 0; page < OLED_PAGES; page++)
+    {
+        // Define a página atual
+        ssd1306_write_cmd(0xB0 + page);   // 0xB0 até 0xB7
+        // Coluna inicial = 0
+        ssd1306_write_cmd(0x00);         // col low = 0
+        ssd1306_write_cmd(0x10);         // col high= 0
+
+        // Envia 128 bytes dessa página
+        for (uint8_t col = 0; col < OLED_WIDTH; col++)
+        {
+            uint8_t data = s_oled_buffer[page * OLED_WIDTH + col];
+            ssd1306_write_data(data);
+        }
+    }
+}
+
+// --------- Limpa o buffer em RAM e atualiza display ----------
+static void ssd1306_clear(void)
+{
+    memset(s_oled_buffer, 0x00, sizeof(s_oled_buffer));
+    ssd1306_update();
+}
+
+// --------- Desenha um caractere 6x8 no buffer ----------
+static void ssd1306_draw_char(int x, int y, char c)
+{
+    // x = coluna (0..127), y = linha (0..63)
+    // c deve estar entre 0x20..0x7F
+    if (c < 0x20 || c > 0x7E) {
+        c = 0x20; // espaço se for fora do range
+    }
+
+    // Cada caractere tem 6 colunas na fonte
+    // Precisamos desenhar na faixa x..x+5, nas linhas y..y+7 (8 pixels de altura)
+
+    int font_index = (c - 0x20) * 6; // cada caractere = 6 bytes
+    for (int col = 0; col < 6; col++)
+    {
+        uint8_t line_bits = ssd1306_font6x8[font_index + col];
+        // line_bits tem os 8 pixels (bit0 é a linha de cima)
+
+        for (int row = 0; row < 8; row++)
+        {
+            int px = x + col;   // coluna no display
+            int py = y + row;   // linha no display
+
+            if (px < 0 || px >= OLED_WIDTH || py < 0 || py >= OLED_HEIGHT) {
+                continue; // fora da tela
+            }
+
+            // Verifica se bit 'row' está setado em line_bits
+            bool pixel_on = (line_bits & (1 << row)) != 0;
+
+            // Calcula índice no buffer
+            // page = py/8, offset = py%8
+            int page = py / 8;
+            int bit_offset = py % 8;
+            int index = page * OLED_WIDTH + px;
+
+            if (pixel_on) {
+                s_oled_buffer[index] |= (1 << bit_offset);
+            } else {
+                s_oled_buffer[index] &= ~(1 << bit_offset);
+            }
+        }
+    }
+}
+
+// --------- Desenha uma string (texto) no buffer ----------
+static void ssd1306_draw_string(int x, int y, const char *text)
+{
+    // Aqui, y deve ser múltiplo de 8 se quisermos linhas "limpinhas".
+    // Mas nada impede posicionar em outro valor de y.
+    int orig_x = x;
+    while (*text)
+    {
+        ssd1306_draw_char(x, y, *text);
+        x += 6; // avança 6 colunas (cada caractere)
+        text++;
+        // Se quiser quebrar linha, basta checar x + 6 > 128, etc.
+        // (aqui é bem simples)
+    }
+}
+
+// --------- Inicializa I2C (mesmo que no LCD, mas agora para OLED) ----------
+static esp_err_t i2c_master_init(void)
+{
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_SDA_PIN,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_io_num = I2C_SCL_PIN,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_FREQ_HZ,
+    };
+    esp_err_t err = i2c_param_config(I2C_PORT, &conf);
+    if (err != ESP_OK) return err;
+
+    err = i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    return err;
+}
+
+// =======================================================================
+// ======================== app_main =====================================
+// =======================================================================
+void app_main(void)
+{
+    ESP_ERROR_CHECK(nvs_flash_init());
+    configure_led();
+    init_wifi();
+    wait_for_wifi_ready();
+    init_espnow();
+
+    // ---------------------------------------------------
+    // Inicializa I2C e SSD1306
+    // ---------------------------------------------------
+    ESP_ERROR_CHECK(i2c_master_init());
+    ssd1306_init();
+
+    // Limpa display e mostra as duas linhas:
+    ssd1306_clear();
+    // Primeira linha (y=0):
+    ssd1306_draw_string(0, 0, "AR CONDICIONADO");
+    // Segunda linha (y=8):
+    ssd1306_draw_string(0, 8, "Aguardando comando");
+    // Atualiza de fato a tela:
+    ssd1306_update();
+
+    // Log do MAC local
+    uint8_t mymac[6];
+    esp_read_mac(mymac, ESP_MAC_WIFI_STA);
+    print_mac("📍 Meu MAC é:", mymac);
+
+    // Cria tarefa de envio HELLO
+    xTaskCreate(hello_task, "hello_task", 2048, NULL, 5, NULL);
+
+    // Loop principal (pisca LED e manda DATA para peers)
+    while (1)
+    {
+        blink_led();
+        send_data_to_peers();
+        s_led_state = !s_led_state;
+        vTaskDelay(BLINK_PERIOD / portTICK_PERIOD_MS);
+    }
+}

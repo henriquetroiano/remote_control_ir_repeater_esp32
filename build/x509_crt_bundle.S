@@ -1,4 +1,4 @@
-/* * Data converted from /workspaces/remote_control_ir_repeater_esp32_arduino/build/esp-idf/mbedtls/x509_crt_bundle
+/* * Data converted from /workspaces/remote_control_ir_repeater_esp32/build/esp-idf/mbedtls/x509_crt_bundle
  */
 .data
 #if !defined (__APPLE__) && !defined (__linux__)
@@ -4330,3 +4330,7 @@ _binary_x509_crt_bundle_end: /* for objcopy compatibility */
 .global x509_crt_bundle_length
 x509_crt_bundle_length:
 .long 68983
+
+#if defined (__linux__)
+.section .note.GNU-stack,"",@progbits
+#endif

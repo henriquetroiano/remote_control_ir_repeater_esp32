@@ -39,6 +39,6 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("/workspaces/remote_control_ir_repeater_esp32_arduino/build/esp-idf/esp_system/port/cmake_install.cmake")
+  include("/workspaces/remote_control_ir_repeater_esp32/build/esp-idf/esp_system/port/cmake_install.cmake")
 endif()
 

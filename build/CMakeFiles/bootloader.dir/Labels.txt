@@ -1,13 +1,13 @@
 # Target labels
  bootloader
 # Source files and their labels
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/CMakeFiles/bootloader
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/CMakeFiles/bootloader.rule
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/CMakeFiles/bootloader-complete.rule
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
-/workspaces/remote_control_ir_repeater_esp32_arduino/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
+/workspaces/remote_control_ir_repeater_esp32/build/CMakeFiles/bootloader
+/workspaces/remote_control_ir_repeater_esp32/build/CMakeFiles/bootloader.rule
+/workspaces/remote_control_ir_repeater_esp32/build/CMakeFiles/bootloader-complete.rule
+/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/workspaces/remote_control_ir_repeater_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
