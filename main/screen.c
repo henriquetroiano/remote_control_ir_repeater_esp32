@@ -5,7 +5,9 @@
 #include "driver/i2c.h"
 #include "esp_log.h"
 
-// -------------------- Definições específicas do SSD1306 --------------------
+//
+//  -------------------- Definições específicas do SSD1306 --------------------
+//
 #define SSD1306_ADDR 0x3C // Ajuste se for 0x3D
 #define OLED_WIDTH 128
 #define OLED_HEIGHT 64
@@ -27,7 +29,7 @@ static bool s_screen_present = false;
 
 // Fonte 6x8 (96 caracteres de 0x20 ' ' a 0x7F '~')
 static const uint8_t ssd1306_font6x8[] = {
-    // ASCII 0x20 (Espaço) até 0x7F (~), 96 chars, cada um 6 bytes.
+    // ASCII 0x20..0x7F (cada char 6 bytes => 6 colunas, 8 linhas)
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 0x20 ' '
     0x00, 0x00, 0x5F, 0x00, 0x00, 0x00, // 0x21 '!'
     0x00, 0x03, 0x00, 0x03, 0x00, 0x00, // 0x22 '"'
@@ -125,237 +127,338 @@ static const uint8_t ssd1306_font6x8[] = {
     0x02, 0x01, 0x02, 0x04, 0x02, 0x00  // 0x7E '~'
 };
 
-// ------------------------------------------------------------------
-// Funções de envio I2C, mas que só enviam se a tela estiver presente
-// ------------------------------------------------------------------
+//
+//  -------------------- Funções de envio I2C (se a tela estiver presente) --------------------
+//
 static void ssd1306_write_cmd(uint8_t cmd)
 {
-  if (!s_screen_present)
-  {
-    return;
-  }
+    if (!s_screen_present)
+        return;
 
-  i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
-  i2c_master_start(cmd_handle);
-  i2c_master_write_byte(cmd_handle, (SSD1306_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
+    i2c_master_start(cmd_handle);
+    i2c_master_write_byte(cmd_handle, (SSD1306_ADDR << 1) | I2C_MASTER_WRITE, true);
 
-  // 0x00 = enviando comando
-  i2c_master_write_byte(cmd_handle, 0x00, true);
-  i2c_master_write_byte(cmd_handle, cmd, true);
+    // 0x00 = enviando comando
+    i2c_master_write_byte(cmd_handle, 0x00, true);
+    i2c_master_write_byte(cmd_handle, cmd, true);
 
-  i2c_master_stop(cmd_handle);
-  esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, cmd_handle, pdMS_TO_TICKS(100));
-  i2c_cmd_link_delete(cmd_handle);
+    i2c_master_stop(cmd_handle);
+    esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, cmd_handle, pdMS_TO_TICKS(100));
+    i2c_cmd_link_delete(cmd_handle);
 
-  if (ret != ESP_OK)
-  {
-    ESP_LOGE(TAG, "Erro cmd 0x%02X: %s", cmd, esp_err_to_name(ret));
-  }
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Erro cmd 0x%02X: %s", cmd, esp_err_to_name(ret));
+    }
 }
 
 static void ssd1306_write_data(uint8_t data)
 {
-  if (!s_screen_present)
-  {
-    return;
-  }
+    if (!s_screen_present)
+        return;
 
-  i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
-  i2c_master_start(cmd_handle);
-  i2c_master_write_byte(cmd_handle, (SSD1306_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
+    i2c_master_start(cmd_handle);
+    i2c_master_write_byte(cmd_handle, (SSD1306_ADDR << 1) | I2C_MASTER_WRITE, true);
 
-  // 0x40 = enviando dados de display
-  i2c_master_write_byte(cmd_handle, 0x40, true);
-  i2c_master_write_byte(cmd_handle, data, true);
+    // 0x40 = enviando dados de display
+    i2c_master_write_byte(cmd_handle, 0x40, true);
+    i2c_master_write_byte(cmd_handle, data, true);
 
-  i2c_master_stop(cmd_handle);
-  esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, cmd_handle, pdMS_TO_TICKS(100));
-  i2c_cmd_link_delete(cmd_handle);
+    i2c_master_stop(cmd_handle);
+    esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, cmd_handle, pdMS_TO_TICKS(100));
+    i2c_cmd_link_delete(cmd_handle);
 
-  if (ret != ESP_OK)
-  {
-    ESP_LOGE(TAG, "Erro data 0x%02X: %s", data, esp_err_to_name(ret));
-  }
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Erro data 0x%02X: %s", data, esp_err_to_name(ret));
+    }
 }
 
-// -------------------- Funções internas de inicialização --------------------
+//
+//  -------------------- Inicialização I2C e detecção do SSD1306 --------------------
+//
 static esp_err_t i2c_master_init(void)
 {
-  i2c_config_t conf = {
-      .mode = I2C_MODE_MASTER,
-      .sda_io_num = I2C_SDA_PIN,
-      .sda_pullup_en = GPIO_PULLUP_ENABLE,
-      .scl_io_num = I2C_SCL_PIN,
-      .scl_pullup_en = GPIO_PULLUP_ENABLE,
-      .master.clk_speed = I2C_FREQ_HZ,
-  };
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_SDA_PIN,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_io_num = I2C_SCL_PIN,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_FREQ_HZ,
+    };
 
-  esp_err_t err = i2c_param_config(I2C_PORT, &conf);
-  if (err != ESP_OK)
-  {
-    return err;
-  }
-  return i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    esp_err_t err = i2c_param_config(I2C_PORT, &conf);
+    if (err != ESP_OK)
+    {
+        return err;
+    }
+    return i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
 }
 
 /**
- * @brief Verifica se o SSD1306 responde no endereço 0x3C.
- *        Tenta escrever sem dados, apenas checar ACK.
+ * @brief Verifica se o SSD1306 responde no endereço 0x3C (ACK).
  */
 static bool ssd1306_probe(void)
 {
-  i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
-  i2c_master_start(cmd_handle);
-  i2c_master_write_byte(cmd_handle, (SSD1306_ADDR << 1) | I2C_MASTER_WRITE, true);
-  i2c_master_stop(cmd_handle);
+    i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
+    i2c_master_start(cmd_handle);
+    i2c_master_write_byte(cmd_handle, (SSD1306_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_stop(cmd_handle);
 
-  esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, cmd_handle, pdMS_TO_TICKS(100));
-  i2c_cmd_link_delete(cmd_handle);
+    esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, cmd_handle, pdMS_TO_TICKS(100));
+    i2c_cmd_link_delete(cmd_handle);
 
-  // Se não for ESP_OK, não houve ACK no endereço
-  return (ret == ESP_OK);
+    return (ret == ESP_OK);
 }
 
 static void ssd1306_init_hw(void)
 {
-  // Sequência clássica de init do SSD1306 128x64
-  ssd1306_write_cmd(0xAE); // OFF
-  ssd1306_write_cmd(0x20);
-  ssd1306_write_cmd(0x00); // Horizontal address
-  ssd1306_write_cmd(0xB0);
-  ssd1306_write_cmd(0xC8);
-  ssd1306_write_cmd(0x00);
-  ssd1306_write_cmd(0x10);
-  ssd1306_write_cmd(0x40);
-  ssd1306_write_cmd(0x81);
-  ssd1306_write_cmd(0xFF); // contraste
-  ssd1306_write_cmd(0xA1);
-  ssd1306_write_cmd(0xA6);
-  ssd1306_write_cmd(0xA8);
-  ssd1306_write_cmd(0x3F);
-  ssd1306_write_cmd(0xA4);
-  ssd1306_write_cmd(0xD3);
-  ssd1306_write_cmd(0x00);
-  ssd1306_write_cmd(0xD5);
-  ssd1306_write_cmd(0xF0);
-  ssd1306_write_cmd(0xD9);
-  ssd1306_write_cmd(0x22);
-  ssd1306_write_cmd(0xDA);
-  ssd1306_write_cmd(0x12);
-  ssd1306_write_cmd(0xDB);
-  ssd1306_write_cmd(0x20);
-  ssd1306_write_cmd(0x8D);
-  ssd1306_write_cmd(0x14);
-  ssd1306_write_cmd(0xAF); // ON
+    // Sequência clássica de init do SSD1306 128x64
+    ssd1306_write_cmd(0xAE); // OFF
+    ssd1306_write_cmd(0x20);
+    ssd1306_write_cmd(0x00); // Horizontal address
+    ssd1306_write_cmd(0xB0);
+    ssd1306_write_cmd(0xC8);
+    ssd1306_write_cmd(0x00);
+    ssd1306_write_cmd(0x10);
+    ssd1306_write_cmd(0x40);
+    ssd1306_write_cmd(0x81);
+    ssd1306_write_cmd(0xFF); // contraste
+    ssd1306_write_cmd(0xA1);
+    ssd1306_write_cmd(0xA6);
+    ssd1306_write_cmd(0xA8);
+    ssd1306_write_cmd(0x3F);
+    ssd1306_write_cmd(0xA4);
+    ssd1306_write_cmd(0xD3);
+    ssd1306_write_cmd(0x00);
+    ssd1306_write_cmd(0xD5);
+    ssd1306_write_cmd(0xF0);
+    ssd1306_write_cmd(0xD9);
+    ssd1306_write_cmd(0x22);
+    ssd1306_write_cmd(0xDA);
+    ssd1306_write_cmd(0x12);
+    ssd1306_write_cmd(0xDB);
+    ssd1306_write_cmd(0x20);
+    ssd1306_write_cmd(0x8D);
+    ssd1306_write_cmd(0x14);
+    ssd1306_write_cmd(0xAF); // ON
 }
 
-// -------------------- Implementações das funções da API screen.h --------------------
+//
+//  -------------------- Implementações das funções da API screen.h --------------------
+//
 esp_err_t screen_init(void)
 {
-  esp_err_t err = i2c_master_init();
-  if (err != ESP_OK)
-  {
-    return err;
-  }
+    esp_err_t err = i2c_master_init();
+    if (err != ESP_OK)
+    {
+        return err;
+    }
 
-  // Tenta detectar o SSD1306
-  bool found = ssd1306_probe();
-  if (!found)
-  {
-    ESP_LOGW(TAG, "SSD1306 não encontrado no endereço 0x%02X. Continuando sem display...", SSD1306_ADDR);
-    s_screen_present = false;
-    // Retorna OK para não travar a aplicação
+    // Tenta detectar o SSD1306
+    bool found = ssd1306_probe();
+    if (!found)
+    {
+        ESP_LOGW(TAG, "SSD1306 não encontrado no endereço 0x%02X. Continuando sem display...", SSD1306_ADDR);
+        s_screen_present = false;
+        // Retorna OK para não travar a aplicação
+        return ESP_OK;
+    }
+
+    s_screen_present = true;
+    ESP_LOGI(TAG, "SSD1306 detectado no endereço 0x%02X.", SSD1306_ADDR);
+
+    // Limpa o buffer local
+    memset(s_oled_buffer, 0, sizeof(s_oled_buffer));
+
+    // Inicializa o hardware do SSD1306
+    ssd1306_init_hw();
+
     return ESP_OK;
-  }
-
-  s_screen_present = true;
-  ESP_LOGI(TAG, "SSD1306 detectado no endereço 0x%02X.", SSD1306_ADDR);
-
-  // Limpa o buffer local
-  memset(s_oled_buffer, 0, sizeof(s_oled_buffer));
-
-  // Inicializa o hardware do SSD1306
-  ssd1306_init_hw();
-
-  return ESP_OK;
 }
 
 void screen_clear(void)
 {
-  // Se a tela não está presente, só limpa o buffer e sai
-  memset(s_oled_buffer, 0, sizeof(s_oled_buffer));
-  if (s_screen_present)
-  {
-    screen_update();
-  }
+    // Fundo preto = bits em zero
+    memset(s_oled_buffer, 0x00, sizeof(s_oled_buffer));
+    if (s_screen_present)
+    {
+        screen_update_default();
+    }
 }
 
-void screen_update(void)
+void screen_update_default(void)
 {
-  if (!s_screen_present)
-  {
-    return;
-  }
-
-  // O display tem 8 páginas (cada com 128 bytes)
-  for (uint8_t page = 0; page < OLED_PAGES; page++)
-  {
-    ssd1306_write_cmd(0xB0 + page); // page address
-    ssd1306_write_cmd(0x00);        // lower col = 0
-    ssd1306_write_cmd(0x10);        // higher col = 0
-
-    for (uint8_t col = 0; col < OLED_WIDTH; col++)
+    if (!s_screen_present)
     {
-      ssd1306_write_data(s_oled_buffer[page * OLED_WIDTH + col]);
+        return;
     }
-  }
+    // O display tem 8 páginas (8 blocks de 128 bytes)
+    for (uint8_t page = 0; page < OLED_PAGES; page++)
+    {
+        ssd1306_write_cmd(0xB0 + page); // page address
+        ssd1306_write_cmd(0x00);        // lower col = 0
+        ssd1306_write_cmd(0x10);        // higher col = 0
+
+        for (uint8_t col = 0; col < OLED_WIDTH; col++)
+        {
+            ssd1306_write_data(s_oled_buffer[page * OLED_WIDTH + col]);
+        }
+    }
 }
 
 void screen_draw_string(int x, int y, const char *text)
 {
-  while (*text)
-  {
-    char c = *text;
-    // Se fora do ASCII 0x20..0x7E, usa espaço
+    // Desenha texto “branco” em fundo preto (bit=1 liga o pixel)
+    while (*text)
+    {
+        char c = *text;
+        // Se fora do ASCII 0x20..0x7E, usa espaço
+        if (c < 0x20 || c > 0x7E)
+        {
+            c = 0x20;
+        }
+
+        int font_index = (c - 0x20) * 6;
+
+        // Para cada coluna (6 colunas), e cada bit (8 linhas)
+        for (int col = 0; col < 6; col++)
+        {
+            uint8_t line_bits = ssd1306_font6x8[font_index + col];
+
+            for (int row = 0; row < 8; row++)
+            {
+                int px = x + col;
+                int py = y + row;
+                if (px < 0 || px >= OLED_WIDTH || py < 0 || py >= OLED_HEIGHT)
+                    continue;
+
+                int page = py / 8;
+                int bit_offset = py % 8;
+                int index = page * OLED_WIDTH + px;
+
+                bool pixel_on = (line_bits & (1 << row)) != 0;
+                if (pixel_on)
+                {
+                    s_oled_buffer[index] |= (1 << bit_offset); // Liga bit
+                }
+                else
+                {
+                    s_oled_buffer[index] &= ~(1 << bit_offset); // Desliga
+                }
+            }
+        }
+        x += 6;
+        text++;
+    }
+}
+
+//
+//  -------------------- Novas funções para fundo branco e texto preto --------------------
+//
+
+/**
+ * @brief Limpa a tela deixando fundo branco (bits = 1).
+ */
+void screen_clear_default(void)
+{
+    memset(s_oled_buffer, 0xFF, sizeof(s_oled_buffer));
+    if (s_screen_present)
+    {
+        screen_update_default();
+    }
+}
+
+/**
+ * @brief Desenha um caractere (fonte 6x8), porém escalado e “preto”
+ *        (ou seja, limpa bit em vez de setar).
+ *
+ * @param x     Coordenada x na tela
+ * @param y     Coordenada y na tela
+ * @param c     Caractere a desenhar
+ * @param scale Escala (1 = 6x8 normal, 2 = 12x16, etc.)
+ */
+static void screen_draw_char_scaled(int x, int y, char c, int scale)
+{
+    // Ajusta c para a faixa 0x20..0x7E
     if (c < 0x20 || c > 0x7E)
     {
-      c = 0x20;
+        c = 0x20;
     }
 
-    // Índice na fonte 6x8
     int font_index = (c - 0x20) * 6;
 
-    // Desenha 6 colunas, cada col = 8 bits (altura)
     for (int col = 0; col < 6; col++)
     {
-      uint8_t line_bits = ssd1306_font6x8[font_index + col];
+        uint8_t bits = ssd1306_font6x8[font_index + col];
 
-      for (int row = 0; row < 8; row++)
-      {
-        int px = x + col;
-        int py = y + row;
-        if (px < 0 || px >= OLED_WIDTH || py < 0 || py >= OLED_HEIGHT)
+        for (int row = 0; row < 8; row++)
         {
-          continue;
-        }
+            bool pixel_on = (bits & (1 << row)) != 0;
+            if (pixel_on)
+            {
+                // Para “escala”, desenha um bloco scale×scale
+                for (int sx = 0; sx < scale; sx++)
+                {
+                    for (int sy = 0; sy < scale; sy++)
+                    {
+                        int px = x + col * scale + sx;
+                        int py = y + row * scale + sy;
+                        if (px < 0 || px >= OLED_WIDTH || py < 0 || py >= OLED_HEIGHT)
+                            continue;
 
-        int page = py / 8;
-        int bit_offset = py % 8;
-        int index = page * OLED_WIDTH + px;
-
-        bool pixel_on = (line_bits & (1 << row)) != 0;
-        if (pixel_on)
-        {
-          s_oled_buffer[index] |= (1 << bit_offset);
+                        int page = py / 8;
+                        int bit_offset = py % 8;
+                        int idx = page * OLED_WIDTH + px;
+                        // Texto “branco” => limpar bit (fundo está 0)
+                        s_oled_buffer[idx] |= (1 << bit_offset);
+                    }
+                }
+            }
         }
+    }
+}
+
+/**
+ * @brief Desenha string inteira em preto, fundo branco, com escala.
+ *
+ * @param x     Coord. x do canto superior-esquerdo
+ * @param y     Coord. y do canto superior-esquerdo
+ * @param text  Texto a desenhar
+ * @param scale Escala do caractere
+ */
+void screen_draw_string_scaled(int x, int y, const char *text, int scale)
+{
+    while (*text)
+    {
+        screen_draw_char_scaled(x, y, *text, scale);
+
+        if (*text == ' ')
+            x += (1 * scale); // espaço mais estreito
         else
-        {
-          s_oled_buffer[index] &= ~(1 << bit_offset);
-        }
-      }
+            x += (5 * scale) + (scale / 2); // caractere normal com pequeno espaço
+
+        text++;
+    }
+}
+
+int screen_get_string_width(const char *text, int scale)
+{
+    int width = 0;
+
+    while (*text)
+    {
+        if (*text == ' ')
+            width += (1 * scale);
+        else
+            width += (5 * scale) + (scale / 2);
+
+        text++;
     }
 
-    x += 6; // avança 6 colunas
-    text++;
-  }
+    return width;
 }
+

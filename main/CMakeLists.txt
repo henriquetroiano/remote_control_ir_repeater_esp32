@@ -4,6 +4,9 @@ idf_component_register(
         "led.c"
         "screen.c"
         "wifi.c"
+        "write.c"
+        "keyboard.c"
+        "commander.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_wifi
