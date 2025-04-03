@@ -1,186 +1,192 @@
-#include "infrared.h"
-#include "driver/gpio.h"
-#include "driver/ledc.h"
+#include <stdio.h>
+#include <string.h>
+#include "driver/rmt_tx.h"
+#include "driver/rmt_rx.h"
 #include "esp_log.h"
-#include "esp_timer.h"
-#include "esp_rom_sys.h"
+#include "infrared.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include <string.h>
-
+#include "esp_timer.h"
 #include "wifi.h"
 
-#define IR_RECV_GPIO GPIO_NUM_15
-#define IR_SEND_GPIO GPIO_NUM_23
-#define MAX_PULSES 200
+#define RMT_RX_GPIO 15
+#define RMT_TX_GPIO 23
+#define RMT_CLK_HZ 1000000
+#define RMT_MEM_BLOCK_SYMBOLS 64
+#define RMT_RESOLUTION_HZ 1000000
+#define MAX_PULSES 1000
+#define MAX_SYMBOLS 256
 
-static const char *TAG = "IR_RAW";
-
-// Estrutura para passar dados via fila
-typedef struct
-{
+typedef struct {
     uint32_t pulse_data[MAX_PULSES];
     int length;
 } ir_raw_signal_t;
 
-static uint32_t pulses[MAX_PULSES];
-static int pulse_count = 0;
-static int64_t last_time = 0;
+static const char *TAG = "IR_RMT";
 
-static QueueHandle_t ir_send_queue;
+static rmt_channel_handle_t rmt_tx_channel = NULL;
+static rmt_channel_handle_t rmt_rx_channel = NULL;
+static rmt_encoder_handle_t rmt_encoder = NULL;
+static QueueHandle_t ir_send_queue = NULL;
+static rmt_symbol_word_t ir_rx_buffer[MAX_SYMBOLS];
 
-// === PWM para modulação de 38kHz ===
-
-void infrared_pwm_init()
+static bool rmt_rx_callback(rmt_channel_handle_t channel, const rmt_rx_done_event_data_t *edata, void *user_data)
 {
-    ledc_timer_config_t ledc_timer = {
-        .speed_mode = LEDC_HIGH_SPEED_MODE,
-        .duty_resolution = LEDC_TIMER_8_BIT,
-        .timer_num = LEDC_TIMER_0,
-        .freq_hz = 38000,  // 38 kHz
-        .clk_cfg = LEDC_AUTO_CLK
+    if (edata && edata->num_symbols > 0) {
+        if (edata->num_symbols > MAX_PULSES) {
+            ESP_LOGW(TAG, "Número de símbolos excede o limite (%d > %d)", edata->num_symbols, MAX_PULSES);
+            return false;
+        }
+
+        ir_raw_signal_t signal;
+        memset(&signal, 0, sizeof(signal));
+
+        for (int i = 0; i < edata->num_symbols; i++) {
+            signal.pulse_data[i] = edata->received_symbols[i].duration0;
+        }
+        signal.length = edata->num_symbols;
+
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xQueueSendFromISR(ir_send_queue, &signal, &xHigherPriorityTaskWoken);
+
+        return xHigherPriorityTaskWoken == pdTRUE;
+    }
+    return false;
+}
+
+void infrared_init(void)
+{
+    ESP_LOGI(TAG, "Inicializando RMT para TX e RX...");
+
+    rmt_tx_channel_config_t tx_config = {
+        .gpio_num = RMT_TX_GPIO,
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .mem_block_symbols = RMT_MEM_BLOCK_SYMBOLS,
+        .resolution_hz = RMT_RESOLUTION_HZ,
+        .trans_queue_depth = 4,
+        .flags = {
+            .invert_out = false
+        }
     };
-    ledc_timer_config(&ledc_timer);
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_config, &rmt_tx_channel));
+    ESP_ERROR_CHECK(rmt_enable(rmt_tx_channel));
 
-    ledc_channel_config_t ledc_channel = {
-        .speed_mode = LEDC_HIGH_SPEED_MODE,
-        .channel = LEDC_CHANNEL_0,
-        .timer_sel = LEDC_TIMER_0,
-        .intr_type = LEDC_INTR_DISABLE,
-        .gpio_num = IR_SEND_GPIO,
-        .duty = 0,  // Começa desligado
-        .hpoint = 0
+    rmt_copy_encoder_config_t encoder_config = {};
+    ESP_ERROR_CHECK(rmt_new_copy_encoder(&encoder_config, &rmt_encoder));
+
+    rmt_rx_channel_config_t rx_config = {
+        .gpio_num = RMT_RX_GPIO,
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .mem_block_symbols = RMT_MEM_BLOCK_SYMBOLS,
+        .resolution_hz = RMT_RESOLUTION_HZ,
+        .flags = {
+            .with_dma = false
+        }
     };
-    ledc_channel_config(&ledc_channel);
-}
+    ESP_ERROR_CHECK(rmt_new_rx_channel(&rx_config, &rmt_rx_channel));
 
-void ir_carrier_on()
-{
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, 128);  // 50% duty (128/255)
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-}
+    rmt_rx_event_callbacks_t callbacks = {
+        .on_recv_done = rmt_rx_callback
+    };
+    ESP_ERROR_CHECK(rmt_rx_register_event_callbacks(rmt_rx_channel, &callbacks, NULL));
+    ESP_ERROR_CHECK(rmt_enable(rmt_rx_channel));
 
-void ir_carrier_off()
-{
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, 0);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-}
-
-// === Fim do controle PWM ===
-
-void IRAM_ATTR gpio_isr_handler(void *arg)
-{
-    int level = gpio_get_level(IR_RECV_GPIO);
-    int64_t now = esp_timer_get_time();
-    int64_t duration = now - last_time;
-
-    if (pulse_count < MAX_PULSES)
-        pulses[pulse_count++] = (uint32_t)duration;
-
-    last_time = now;
-}
-
-void infrared_init()
-{
-    // Config receptor
-    gpio_config_t rx_conf = {
-        .pin_bit_mask = (1ULL << IR_RECV_GPIO),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_ANYEDGE};
-    gpio_config(&rx_conf);
-
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(IR_RECV_GPIO, gpio_isr_handler, NULL);
-
-    // Config transmissor (GPIO será controlado pelo LEDC)
-    gpio_config_t tx_conf = {
-        .pin_bit_mask = (1ULL << IR_SEND_GPIO),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE};
-    gpio_config(&tx_conf);
-
-    infrared_pwm_init(); // Inicializa modulação PWM
-
-    // Cria fila
     ir_send_queue = xQueueCreate(4, sizeof(ir_raw_signal_t));
+    assert(ir_send_queue != NULL);
 
-    ESP_LOGI(TAG, "Infrared initialized. RX: GPIO %d, TX: GPIO %d (PWM 38kHz)", IR_RECV_GPIO, IR_SEND_GPIO);
+    rmt_receive_config_t recv_cfg = {
+        .signal_range_min_ns = 500,
+        .signal_range_max_ns = 15000000
+    };
+
+    esp_err_t err = rmt_receive(rmt_rx_channel, ir_rx_buffer, sizeof(ir_rx_buffer), &recv_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Erro em rmt_receive: 0x%x", err);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Infrared RMT initialized. TX: GPIO %d | RX: GPIO %d", RMT_TX_GPIO, RMT_RX_GPIO);
 }
 
-// 🔁 Task separada para envio IR
-void ir_send_task(void *arg)
+void infrared_send(const rmt_symbol_word_t *symbols, size_t symbol_num)
+{
+    if (!symbols || symbol_num == 0) {
+        ESP_LOGW(TAG, "Tentativa de envio com buffer vazio.");
+        return;
+    }
+
+    rmt_transmit_config_t tx_config = {
+        .loop_count = 0,
+        .flags = {
+            .eot_level = 0
+        }
+    };
+
+    ESP_ERROR_CHECK(rmt_transmit(rmt_tx_channel, rmt_encoder, symbols, symbol_num * sizeof(rmt_symbol_word_t), &tx_config));
+    ESP_ERROR_CHECK(rmt_tx_wait_all_done(rmt_tx_channel, -1));
+    ESP_LOGI(TAG, "Sinal IR transmitido (%zu símbolos).", symbol_num);
+}
+
+void infrared_task(void *arg)
 {
     ir_raw_signal_t signal;
 
-    while (1)
-    {
-        if (xQueueReceive(ir_send_queue, &signal, portMAX_DELAY))
-        {
-            ESP_LOGI(TAG, "Sending IR with %d pulses", signal.length);
+    while (1) {
+        memset(&signal, 0, sizeof(signal));
 
-            for (int i = 0; i < signal.length; i++)
-            {
-                if (i % 2 == 0)
-                    ir_carrier_on();  // Envia pulso com PWM
-                else
-                    ir_carrier_off(); // Pausa (sem PWM)
-
-                esp_rom_delay_us(signal.pulse_data[i]);
-
-                if (i % 20 == 0)
-                    taskYIELD(); // evitar WDT
+        if (xQueueReceive(ir_send_queue, &signal, portMAX_DELAY)) {
+            if (signal.length <= 0 || signal.length > MAX_PULSES) {
+                ESP_LOGW(TAG, "Sinal IR com tamanho inválido recebido da fila: %d", signal.length);
+                continue;
             }
 
-            ir_carrier_off(); // Garante desligado no final
-            ESP_LOGI(TAG, "IR signal sent.");
+            // Segurança adicional: evita crash no printf mesmo se o struct tiver sido corrompido
+            uint32_t safe_length = signal.length;
+
+            bool valid = true;
+            for (int i = 0; i < safe_length; i++) {
+                if (signal.pulse_data[i] > 10000000) {
+                    ESP_LOGW(TAG, "Pulso fora do intervalo: %lu (i=%d)", (unsigned long)signal.pulse_data[i], i);
+                    valid = false;
+                    break;
+                }
+            }
+
+            if (!valid) {
+                continue;
+            }
+
+            ESP_LOGI(TAG, "Recebido sinal IR com %d pulsos", safe_length);
+
+            int display_count = safe_length < 20 ? safe_length : 20;
+            for (int i = 0; i < display_count; i++) {
+                ESP_LOGI(TAG, "Pulso[%d]: %lu", i, (unsigned long)signal.pulse_data[i]);
+            }
+            if (safe_length > 20) {
+                ESP_LOGI(TAG, "... e mais %d pulsos", safe_length - 20);
+            }
+
+            wifi_send_ir("TODOS", signal.pulse_data, safe_length);
         }
     }
 }
 
-// 🔍 Task principal: escuta IR e envia para fila
-void infrared_task(void *arg)
-{
-    while (1)
-    {
-        if (pulse_count > 0 && esp_timer_get_time() - last_time > 50000)
-        {
-            ir_raw_signal_t signal;
-            int start = (pulses[0] > 50000) ? 1 : 0;
-            int len = pulse_count - start;
-
-            if (len > MAX_PULSES)
-                len = MAX_PULSES;
-
-            for (int i = 0; i < len; i++)
-                signal.pulse_data[i] = pulses[i + start];
-            signal.length = len;
-
-            ESP_LOGI(TAG, "Received IR with %d pulses", len);
-            for (int i = 0; i < len; i++)
-                printf("%lu%s", (unsigned long)signal.pulse_data[i], (i < len - 1) ? "," : "\n");
-
-            xQueueSend(ir_send_queue, &signal, 0);
-            wifi_send_ir("TODOS", signal.pulse_data, signal.length);
-            pulse_count = 0;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
 
 void ir_send_raw(const uint32_t *pulses, int len)
 {
-    if (len <= 0 || len > MAX_PULSES)
+    if (!pulses || len <= 0 || len > MAX_PULSES || !ir_send_queue) {
+        ESP_LOGW(TAG, "ir_send_raw chamado com parâmetros inválidos.");
         return;
+    }
 
-    ir_raw_signal_t signal = {0};
+    ir_raw_signal_t signal;
+    memset(&signal, 0, sizeof(signal));
+
     memcpy(signal.pulse_data, pulses, len * sizeof(uint32_t));
     signal.length = len;
 
-    xQueueSend(ir_send_queue, &signal, 0);
+    if (xQueueSend(ir_send_queue, &signal, 0) != pdPASS) {
+        ESP_LOGW(TAG, "Fila cheia ou erro ao enviar sinal IR.");
+    }
 }

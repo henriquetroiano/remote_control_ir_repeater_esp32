@@ -12,20 +12,17 @@
 #include "wifi.h"
 #include "write.h"
 #include "keyboard.h"
-#include "infrared.h" // 👈 Importado!
+#include "infrared.h"
 
 static const char *TAG = "main";
 
-// Exemplo de tarefa qualquer
 static void hello_task(void *pvParams)
 {
     for (int i = 0; i < 10; i++)
     {
-        // ESP_LOGI(TAG, "Enviando HELLO %d/10", i + 1);
         wifi_send_hello();
         vTaskDelay(pdMS_TO_TICKS(3000));
     }
-    // ESP_LOGI(TAG, "Fim dos HELLOs");
     vTaskDelete(NULL);
 }
 
@@ -45,16 +42,12 @@ void app_main(void)
     xTaskCreate(keyboard_task, "keyboard_task", 2048, NULL, 5, NULL);
     xTaskCreate(hello_task, "hello_task", 4096, NULL, 5, NULL);
 
-    // 👇 Nova task de infravermelho
-    xTaskCreate(infrared_task, "infrared_task", 4096, NULL, 5, NULL);
-    xTaskCreate(ir_send_task, "ir_send_task", 4096, NULL, 4, NULL);
+    // 👇 stack aumentada para 8192 bytes
+    xTaskCreate(infrared_task, "infrared_task", 8192, NULL, 5, NULL);
 
     while (1)
     {
         led_toggle();
-
-        bool led_on = led_get_state();
-
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

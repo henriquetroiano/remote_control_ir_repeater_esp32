@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "remote_control_ir_repeater_esp32",
-    "project_version":    "ac9957f-dirty",
+    "project_version":    "960872d-dirty",
     "project_path":       "/workspaces/remote_control_ir_repeater_esp32",
     "idf_path":           "/opt/esp/idf",
     "build_dir":          "/workspaces/remote_control_ir_repeater_esp32/build",
