@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "remote_control_ir_repeater_esp32",
-    "project_version":    "ba1e5f4-dirty",
+    "project_version":    "ac9957f-dirty",
     "project_path":       "/workspaces/remote_control_ir_repeater_esp32",
     "idf_path":           "/opt/esp/idf",
     "build_dir":          "/workspaces/remote_control_ir_repeater_esp32/build",
@@ -801,11 +801,11 @@
             "type": "LIBRARY",
             "lib": "__idf_main",
             "reqs": [],
-            "priv_reqs": [ "esp_wifi", "nvs_flash", "driver", "espressif__led_strip" ],
+            "priv_reqs": [ "esp_wifi", "nvs_flash", "driver", "esp_timer", "espressif__led_strip" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__led_strip" ],
             "file": "/workspaces/remote_control_ir_repeater_esp32/build/esp-idf/main/libmain.a",
-            "sources": [ "/workspaces/remote_control_ir_repeater_esp32/main/main.c", "/workspaces/remote_control_ir_repeater_esp32/main/led.c", "/workspaces/remote_control_ir_repeater_esp32/main/screen.c", "/workspaces/remote_control_ir_repeater_esp32/main/wifi.c", "/workspaces/remote_control_ir_repeater_esp32/main/write.c", "/workspaces/remote_control_ir_repeater_esp32/main/keyboard.c", "/workspaces/remote_control_ir_repeater_esp32/main/commander.c" ],
+            "sources": [ "/workspaces/remote_control_ir_repeater_esp32/main/main.c", "/workspaces/remote_control_ir_repeater_esp32/main/led.c", "/workspaces/remote_control_ir_repeater_esp32/main/screen.c", "/workspaces/remote_control_ir_repeater_esp32/main/wifi.c", "/workspaces/remote_control_ir_repeater_esp32/main/write.c", "/workspaces/remote_control_ir_repeater_esp32/main/keyboard.c", "/workspaces/remote_control_ir_repeater_esp32/main/commander.c", "/workspaces/remote_control_ir_repeater_esp32/main/infrared.c" ],
             "include_dirs": [ "." ]
         },
         "mbedtls": {
@@ -2266,7 +2266,7 @@
             "dir": "/workspaces/remote_control_ir_repeater_esp32/main",
             "lib": "__idf_main",
             "reqs": [],
-            "priv_reqs": [ "esp_wifi", "nvs_flash", "driver", "espressif__led_strip" ],
+            "priv_reqs": [ "esp_wifi", "nvs_flash", "driver", "esp_timer", "espressif__led_strip" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__led_strip" ],
             "include_dirs": [ "." ]

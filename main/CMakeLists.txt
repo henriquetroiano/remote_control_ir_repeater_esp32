@@ -7,9 +7,11 @@ idf_component_register(
         "write.c"
         "keyboard.c"
         "commander.c"
+        "infrared.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_wifi
         nvs_flash
         driver
+        esp_timer
 )

@@ -10,18 +10,16 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-// Se você precisar do estado do LED dentro das mensagens:
 #include "led.h"
+#include "infrared.h"
 
-// --------------------------------------------------------------------------------
-// Definições e Variáveis internas (somente este .c)
-// --------------------------------------------------------------------------------
-#define GROUP_CODE   "GRUPO_X"
-#define MAX_PEERS    20
+#define GROUP_CODE "GRUPO_X"
+#define MAX_PEERS 20
+#define MAX_PULSES 200
 
 static const char *TAG = "wifi_module";
 
-// Estrutura da mensagem que circula no ESP-NOW
+// Estrutura da mensagem padrão
 typedef struct
 {
     char type[8];
@@ -29,29 +27,28 @@ typedef struct
     char data[32];
 } __attribute__((packed)) message_t;
 
-// Lista de peers registrados
+// Estrutura para envio de sinal IR
+typedef struct
+{
+    char id[32];                     // Ex: "TV1", "TODOS"
+    int pulse_len;                   // Quantidade de pulsos
+    uint32_t pulse_data[MAX_PULSES]; // Sinal IR bruto
+} __attribute__((packed)) ir_message_t;
+
 static esp_now_peer_info_t peers[MAX_PEERS];
 static int peer_count = 0;
 
-// --------------------------------------------------------------------------------
-// Declarações de funções estáticas internas (não aparecem em wifi.h)
-// --------------------------------------------------------------------------------
+// ------------------- Protótipos internos -------------------
 static void init_wifi(void);
 static void wait_for_wifi_ready(void);
 static void init_espnow(void);
-
 static void add_peer_if_needed(const uint8_t *mac);
 static void send_welcome(const uint8_t *dest_mac);
-
-// Callbacks
 static void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int data_len);
 static void on_data_sent(const uint8_t *mac_addr, esp_now_send_status_t status);
-
 static void print_mac(const char *prefix, const uint8_t *mac);
 
-// --------------------------------------------------------------------------------
-// Implementação das funções expostas em wifi.h
-// --------------------------------------------------------------------------------
+// ------------------- Funções públicas -------------------
 
 void wifi_init_all(void)
 {
@@ -69,13 +66,9 @@ void wifi_send_hello(void)
 
     esp_err_t err = esp_now_send(bcast, (uint8_t *)&msg, sizeof(msg));
     if (err == ESP_OK)
-    {
         ESP_LOGI(TAG, "HELLO enviado (broadcast).");
-    }
     else
-    {
         ESP_LOGE(TAG, "Falha ao enviar HELLO: %s", esp_err_to_name(err));
-    }
 }
 
 void wifi_send_data_to_peers(bool led_on)
@@ -83,8 +76,6 @@ void wifi_send_data_to_peers(bool led_on)
     message_t msg = {0};
     strcpy(msg.type, "DATA");
     strcpy(msg.code, GROUP_CODE);
-
-    // Aqui, montamos o campo 'data' informando se o LED está ON ou OFF
     sprintf(msg.data, "LED %s", led_on ? "ON" : "OFF");
 
     for (int i = 0; i < peer_count; i++)
@@ -92,15 +83,35 @@ void wifi_send_data_to_peers(bool led_on)
         print_mac("Enviando DATA para", peers[i].peer_addr);
         esp_err_t err = esp_now_send(peers[i].peer_addr, (uint8_t *)&msg, sizeof(msg));
         if (err != ESP_OK)
-        {
             ESP_LOGE(TAG, "Falha ao enviar para peer %d: %s", i, esp_err_to_name(err));
-        }
     }
 }
 
-// --------------------------------------------------------------------------------
-// Implementação das funções internas (estáticas)
-// --------------------------------------------------------------------------------
+void wifi_send_ir(const char *id, const uint32_t *pulses, int pulse_len)
+{
+    if (pulse_len <= 0 || pulse_len > MAX_PULSES)
+    {
+        ESP_LOGW(TAG, "Quantidade de pulsos IR inválida: %d", pulse_len);
+        return;
+    }
+
+    ir_message_t ir_msg = {0};
+    strncpy(ir_msg.id, id, sizeof(ir_msg.id) - 1);
+    ir_msg.pulse_len = pulse_len;
+    memcpy(ir_msg.pulse_data, pulses, pulse_len * sizeof(uint32_t));
+
+    for (int i = 0; i < peer_count; i++)
+    {
+        print_mac("Enviando IR para", peers[i].peer_addr);
+        esp_err_t err = esp_now_send(peers[i].peer_addr, (uint8_t *)&ir_msg, sizeof(ir_msg));
+        if (err != ESP_OK)
+            ESP_LOGE(TAG, "Erro ao enviar IR para peer %d: %s", i, esp_err_to_name(err));
+    }
+
+    ESP_LOGI(TAG, "IR enviado para %d peers (ID: %s)", peer_count, ir_msg.id);
+}
+
+// ------------------- Funções internas -------------------
 
 static void init_wifi(void)
 {
@@ -110,12 +121,10 @@ static void init_wifi(void)
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // Ajusta canal e protocolo
     ESP_ERROR_CHECK(esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE));
     ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA,
                                           WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
@@ -125,10 +134,11 @@ static void wait_for_wifi_ready(void)
 {
     wifi_second_chan_t second;
     uint8_t channel = 0;
+
     for (int retry = 0; retry < 20; retry++)
     {
         esp_err_t err = esp_wifi_get_channel(&channel, &second);
-        if ((err == ESP_OK) && (channel > 0))
+        if (err == ESP_OK && channel > 0)
         {
             ESP_LOGI(TAG, "Wi-Fi ativo no canal %d", channel);
             return;
@@ -136,44 +146,36 @@ static void wait_for_wifi_ready(void)
         ESP_LOGW(TAG, "Aguardando Wi-Fi estabilizar...(%d)", retry + 1);
         vTaskDelay(pdMS_TO_TICKS(200));
     }
+
     ESP_LOGE(TAG, "Timeout wifi");
 }
 
 static void init_espnow(void)
 {
-    // Se já existir, reinicializa
     uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
     if (esp_now_is_peer_exist(bcast))
-    {
         ESP_ERROR_CHECK(esp_now_deinit());
-    }
 
     ESP_ERROR_CHECK(esp_now_init());
     ESP_ERROR_CHECK(esp_now_register_recv_cb(on_data_recv));
     ESP_ERROR_CHECK(esp_now_register_send_cb(on_data_sent));
 
-    // Adiciona peer para broadcast
     esp_now_peer_info_t peer = {
         .channel = 1,
         .ifidx = WIFI_IF_STA,
-        .encrypt = false
-    };
+        .encrypt = false};
     memcpy(peer.peer_addr, bcast, 6);
 
     if (!esp_now_is_peer_exist(bcast))
     {
         esp_err_t err = esp_now_add_peer(&peer);
         if (err == ESP_OK)
-        {
             ESP_LOGI(TAG, "Peer de broadcast adicionado");
-        }
         else
-        {
             ESP_LOGE(TAG, "Erro ao adicionar peer broadcast: %s", esp_err_to_name(err));
-        }
     }
 
-    // Exibe o MAC local para debug
     uint8_t my_mac[6];
     esp_read_mac(my_mac, ESP_MAC_WIFI_STA);
     print_mac("Meu MAC é:", my_mac);
@@ -181,16 +183,8 @@ static void init_espnow(void)
 
 static void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int data_len)
 {
-    if (data_len != sizeof(message_t))
-    {
-        ESP_LOGW(TAG, "Mensagem com tamanho inválido: %d", data_len);
-        return;
-    }
-
     const uint8_t *mac = recv_info->src_addr;
-    message_t *msg = (message_t *)data;
 
-    // Evita loopback (mensagem do próprio MAC)
     uint8_t my_mac[6];
     esp_read_mac(my_mac, ESP_MAC_WIFI_STA);
     if (memcmp(mac, my_mac, 6) == 0)
@@ -199,30 +193,55 @@ static void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *da
         return;
     }
 
-    print_mac(msg->type, mac);
-    ESP_LOGI(TAG, "Conteúdo: '%s'", msg->data);
+    if (data_len == sizeof(message_t))
+    {
+        const message_t *msg = (const message_t *)data;
 
-    // Checa se é do grupo certo
-    if (strcmp(msg->code, GROUP_CODE) != 0)
-    {
-        ESP_LOGW(TAG, "Código de grupo inválido: %s", msg->code);
-        return;
-    }
+        print_mac(msg->type, mac);
+        ESP_LOGI(TAG, "Conteúdo: '%s'", msg->data);
 
-    // Trata o tipo
-    if (strcmp(msg->type, "HELLO") == 0)
-    {
-        add_peer_if_needed(mac);
-        send_welcome(mac);
+        if (strcmp(msg->code, GROUP_CODE) != 0)
+        {
+            ESP_LOGW(TAG, "Código de grupo inválido: %s", msg->code);
+            return;
+        }
+
+        if (strcmp(msg->type, "HELLO") == 0)
+        {
+            add_peer_if_needed(mac);
+            send_welcome(mac);
+        }
+        else if (strcmp(msg->type, "WELCOME") == 0)
+        {
+            add_peer_if_needed(mac);
+        }
+        else if (strcmp(msg->type, "DATA") == 0)
+        {
+            add_peer_if_needed(mac);
+            // Ex: interpretar conteúdo de msg->data
+        }
     }
-    else if (strcmp(msg->type, "WELCOME") == 0)
+    else if (data_len == sizeof(ir_message_t))
     {
-        add_peer_if_needed(mac);
+        const ir_message_t *ir = (const ir_message_t *)data;
+        print_mac("IR recebido de", mac);
+        ESP_LOGI(TAG, "Destino: %s (%d pulsos)", ir->id, ir->pulse_len);
+
+        // Ação local com base no ID (ex: comparar com seu próprio ID exemplo "1" ou "TODOS")
+        if (strcmp(ir->id, "1") == 0 || strcmp(ir->id, "TODOS") == 0)
+        {
+            uint32_t safe_pulses[MAX_PULSES];
+            int len = ir->pulse_len;
+            if (len > MAX_PULSES)
+                len = MAX_PULSES;
+
+            memcpy(safe_pulses, ir->pulse_data, len * sizeof(uint32_t));
+            ir_send_raw(safe_pulses, len);
+        }
     }
-    else if (strcmp(msg->type, "DATA") == 0)
+    else
     {
-        add_peer_if_needed(mac);
-        // Se quiser fazer algo mais quando receber "DATA", coloque aqui
+        ESP_LOGW(TAG, "Mensagem com tamanho inesperado: %d bytes", data_len);
     }
 }
 
@@ -277,7 +296,6 @@ static void send_welcome(const uint8_t *dest_mac)
     strcpy(msg.data, "MAC OK");
 
     print_mac("Enviando WELCOME para", dest_mac);
-
     esp_err_t err = esp_now_send(dest_mac, (uint8_t *)&msg, sizeof(msg));
     if (err != ESP_OK)
     {
