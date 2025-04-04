@@ -30,9 +30,9 @@ typedef struct
 // Estrutura para envio de sinal IR
 typedef struct
 {
-    char id[32];                     // Ex: "TV1", "TODOS"
-    int pulse_len;                   // Quantidade de pulsos
-    uint32_t pulse_data[MAX_PULSES]; // Sinal IR bruto
+    char id[32];                     
+    int pulse_len;                   
+    uint32_t pulse_data[MAX_PULSES]; 
 } __attribute__((packed)) ir_message_t;
 
 static esp_now_peer_info_t peers[MAX_PEERS];
@@ -227,16 +227,11 @@ static void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *da
         print_mac("IR recebido de", mac);
         ESP_LOGI(TAG, "Destino: %s (%d pulsos)", ir->id, ir->pulse_len);
 
-        // Ação local com base no ID (ex: comparar com seu próprio ID exemplo "1" ou "TODOS")
+        // Ação local com base no ID
         if (strcmp(ir->id, "1") == 0 || strcmp(ir->id, "TODOS") == 0)
         {
-            uint32_t safe_pulses[MAX_PULSES];
-            int len = ir->pulse_len;
-            if (len > MAX_PULSES)
-                len = MAX_PULSES;
-
-            memcpy(safe_pulses, ir->pulse_data, len * sizeof(uint32_t));
-            ir_send_raw(safe_pulses, len);
+            // Manda reproduzir localmente
+            ir_send_raw(ir->pulse_data, ir->pulse_len);
         }
     }
     else

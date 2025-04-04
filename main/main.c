@@ -12,7 +12,7 @@
 #include "wifi.h"
 #include "write.h"
 #include "keyboard.h"
-#include "infrared.h" // 👈 Importado!
+#include "infrared.h" // Agora adaptado para RMT!
 
 static const char *TAG = "main";
 
@@ -21,11 +21,9 @@ static void hello_task(void *pvParams)
 {
     for (int i = 0; i < 10; i++)
     {
-        // ESP_LOGI(TAG, "Enviando HELLO %d/10", i + 1);
         wifi_send_hello();
         vTaskDelay(pdMS_TO_TICKS(3000));
     }
-    // ESP_LOGI(TAG, "Fim dos HELLOs");
     vTaskDelete(NULL);
 }
 
@@ -40,21 +38,27 @@ void app_main(void)
 
     keyboard_init();
     commander_init();
+
+    // --- Inicializa Infrared (com RMT) ---
     infrared_init();
 
+    // Cria tarefas
     xTaskCreate(keyboard_task, "keyboard_task", 2048, NULL, 5, NULL);
     xTaskCreate(hello_task, "hello_task", 4096, NULL, 5, NULL);
 
-    // 👇 Nova task de infravermelho
-    xTaskCreate(infrared_task, "infrared_task", 4096, NULL, 5, NULL);
-    xTaskCreate(ir_send_task, "ir_send_task", 4096, NULL, 4, NULL);
+    // Tarefas IR
+    xTaskCreate(infrared_task, "infrared_task", 32768, NULL, 5, NULL);
+    xTaskCreate(ir_send_task, "ir_send_task", 32768, NULL, 4, NULL);
 
     while (1)
     {
         led_toggle();
-
         bool led_on = led_get_state();
-
         vTaskDelay(pdMS_TO_TICKS(1000));
+
+        // Se desejar, mande broadcast do estado do LED
+        // wifi_send_data_to_peers(led_on);
+        // ESP_LOGI(TAG, "Memória livre: %d bytes", esp_get_free_heap_size());
+
     }
 }
